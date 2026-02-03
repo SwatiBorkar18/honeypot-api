@@ -7,13 +7,10 @@ from typing import List, Optional
 app = FastAPI()
 
 API_KEY = "test123"
-if data is None:
-    return {
-        "status": "success",
-        "reply": "Honeypot endpoint is active and secured"
-    }
 
-
+# --------------------
+# Root health check
+# --------------------
 @app.get("/")
 def root():
     return {"message": "Honeypot API is running"}
@@ -75,32 +72,38 @@ class Message(BaseModel):
     timestamp: str
 
 class Metadata(BaseModel):
-    channel: Optional[str]
-    language: Optional[str]
-    locale: Optional[str]
+    channel: Optional[str] = None
+    language: Optional[str] = None
+    locale: Optional[str] = None
 
 class HoneyPotRequest(BaseModel):
     sessionId: str
     message: Message
     conversationHistory: List[Message] = []
-    metadata: Optional[Metadata]
+    metadata: Optional[Metadata] = None
 
 # --------------------
 # MAIN API ENDPOINT
 # --------------------
 @app.post("/api/honeypot")
 def honeypot(
-    data: HoneyPotRequest | None = None,
+    data: Optional[HoneyPotRequest] = None,
     x_api_key: str = Header(None)
 ):
-
-
+    # API key check
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
+    # 🔑 Handle GUVI endpoint tester (no body sent)
+    if data is None:
+        return {
+            "status": "success",
+            "reply": "Honeypot endpoint is active and secured"
+        }
+
     session_id = data.sessionId
 
-    # Create session
+    # Create session if not exists
     if session_id not in sessions:
         sessions[session_id] = {
             "messages": [],
@@ -129,7 +132,7 @@ def honeypot(
     message_count = len(sessions[session_id]["messages"])
 
     # --------------------
-    # GUVI FINAL CALLBACK (MANDATORY)
+    # GUVI FINAL CALLBACK
     # --------------------
     if (
         sessions[session_id]["scamDetected"]
