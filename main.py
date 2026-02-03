@@ -7,6 +7,12 @@ from typing import List, Optional
 app = FastAPI()
 
 API_KEY = "test123"
+if data is None:
+    return {
+        "status": "success",
+        "reply": "Honeypot endpoint is active and secured"
+    }
+
 
 @app.get("/")
 def root():
@@ -83,7 +89,11 @@ class HoneyPotRequest(BaseModel):
 # MAIN API ENDPOINT
 # --------------------
 @app.post("/api/honeypot")
-def honeypot(data: HoneyPotRequest, x_api_key: str = Header(None)):
+def honeypot(
+    data: HoneyPotRequest | None = None,
+    x_api_key: str = Header(None)
+):
+
 
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
