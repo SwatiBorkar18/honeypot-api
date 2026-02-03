@@ -1,3 +1,4 @@
+from fastapi import Request
 import requests
 import re
 from fastapi import FastAPI, Header, HTTPException
@@ -86,24 +87,31 @@ class HoneyPotRequest(BaseModel):
 # MAIN API ENDPOINT
 # --------------------
 @app.post("/api/honeypot")
-def honeypot(
-    data: Optional[HoneyPotRequest] = None,
+async def honeypot(
+    request: Request,
     x_api_key: str = Header(None)
 ):
-    # 1️⃣ API key check
+    # API key check
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 2️⃣ GUVI tester sends EMPTY BODY → handle it
-    if data is None:
+    # Read raw body
+    body = await request.body()
+
+    # 🟢 GUVI tester case: EMPTY BODY
+    if not body:
         return {
             "status": "success",
             "reply": "Honeypot endpoint is active and secured"
         }
 
+    # Parse JSON manually
+    data_json = await request.json()
+    data = HoneyPotRequest(**data_json)
+
     session_id = data.sessionId
 
-    # 3️⃣ Create session if not exists
+    # Create session if needed
     if session_id not in sessions:
         sessions[session_id] = {
             "messages": [],
@@ -116,14 +124,14 @@ def honeypot(
             "callback_sent": False
         }
 
-    # 4️⃣ Store message
+    # Store message
     sessions[session_id]["messages"].append(data.message.text)
 
-    # 5️⃣ Scam detection
+    # Scam detection
     if not sessions[session_id]["scamDetected"]:
         sessions[session_id]["scamDetected"] = detect_scam(data.message.text)
 
-    # 6️⃣ Extract intelligence
+    # Intelligence extraction
     intel = extract_intelligence(data.message.text)
     sessions[session_id]["intelligence"]["upi_ids"].extend(intel["upi_ids"])
     sessions[session_id]["intelligence"]["phone_numbers"].extend(intel["phone_numbers"])
@@ -131,7 +139,7 @@ def honeypot(
 
     message_count = len(sessions[session_id]["messages"])
 
-    # 7️⃣ Mandatory GUVI callback
+    # 🔔 GUVI FINAL CALLBACK
     if (
         sessions[session_id]["scamDetected"]
         and message_count >= 3
@@ -148,7 +156,7 @@ def honeypot(
                 "phoneNumbers": sessions[session_id]["intelligence"]["phone_numbers"],
                 "suspiciousKeywords": ["urgent", "verify", "blocked"]
             },
-            "agentNotes": "Scammer used urgency and payment redirection"
+            "agentNotes": "Scammer used urgency tactics"
         }
 
         try:
@@ -161,7 +169,6 @@ def honeypot(
         except Exception as e:
             print("Callback failed:", e)
 
-    # 8️⃣ Human-like reply
     reply_text = generate_human_reply(
         sessions[session_id]["scamDetected"],
         message_count
