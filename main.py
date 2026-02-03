@@ -90,11 +90,11 @@ def honeypot(
     data: Optional[HoneyPotRequest] = None,
     x_api_key: str = Header(None)
 ):
-    # API key check
+    # 1️⃣ API key check
     if x_api_key != API_KEY:
         raise HTTPException(status_code=401, detail="Invalid API Key")
 
-    # 🔑 Handle GUVI endpoint tester (no body sent)
+    # 2️⃣ GUVI tester sends EMPTY BODY → handle it
     if data is None:
         return {
             "status": "success",
@@ -103,7 +103,7 @@ def honeypot(
 
     session_id = data.sessionId
 
-    # Create session if not exists
+    # 3️⃣ Create session if not exists
     if session_id not in sessions:
         sessions[session_id] = {
             "messages": [],
@@ -116,14 +116,14 @@ def honeypot(
             "callback_sent": False
         }
 
-    # Store message
+    # 4️⃣ Store message
     sessions[session_id]["messages"].append(data.message.text)
 
-    # Scam detection
+    # 5️⃣ Scam detection
     if not sessions[session_id]["scamDetected"]:
         sessions[session_id]["scamDetected"] = detect_scam(data.message.text)
 
-    # Extract intelligence
+    # 6️⃣ Extract intelligence
     intel = extract_intelligence(data.message.text)
     sessions[session_id]["intelligence"]["upi_ids"].extend(intel["upi_ids"])
     sessions[session_id]["intelligence"]["phone_numbers"].extend(intel["phone_numbers"])
@@ -131,9 +131,7 @@ def honeypot(
 
     message_count = len(sessions[session_id]["messages"])
 
-    # --------------------
-    # GUVI FINAL CALLBACK
-    # --------------------
+    # 7️⃣ Mandatory GUVI callback
     if (
         sessions[session_id]["scamDetected"]
         and message_count >= 3
@@ -163,7 +161,7 @@ def honeypot(
         except Exception as e:
             print("Callback failed:", e)
 
-    # Generate reply
+    # 8️⃣ Human-like reply
     reply_text = generate_human_reply(
         sessions[session_id]["scamDetected"],
         message_count
