@@ -1,105 +1,98 @@
+from flask import Flask, request, jsonify
 import re
 import requests
-from fastapi import FastAPI, Header, HTTPException
-from pydantic import BaseModel
-from typing import List, Optional
+import os
 
-app = FastAPI()
+app = Flask(__name__)
 
+# =========================
+# CONFIG
+# =========================
 API_KEY = "test123"
+GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
-# -------------------------
-# In-memory session memory
-# -------------------------
+# =========================
+# IN-MEMORY SESSION STORE
+# =========================
 sessions = {}
 
-# -------------------------
-# Models
-# -------------------------
-class Message(BaseModel):
-    sender: str
-    text: str
-    timestamp: int
-
-class Metadata(BaseModel):
-    channel: Optional[str] = None
-    language: Optional[str] = None
-    locale: Optional[str] = None
-
-class HoneyPotRequest(BaseModel):
-    sessionId: str
-    message: Message
-    conversationHistory: List[Message] = []
-    metadata: Optional[Metadata] = None
-
-# -------------------------
-# Scam detection
-# -------------------------
-SCAM_KEYWORDS = [
-    "account blocked",
-    "verify",
-    "urgent",
-    "upi",
-    "bank",
-    "otp",
-    "click link",
-    "suspended"
-]
-
+# =========================
+# SCAM DETECTION
+# =========================
 def detect_scam(text: str) -> bool:
+    keywords = [
+        "urgent", "verify", "blocked", "suspended",
+        "bank", "upi", "otp", "click", "account"
+    ]
     text = text.lower()
-    return any(k in text for k in SCAM_KEYWORDS)
+    return any(k in text for k in keywords)
 
-# -------------------------
-# Intelligence extraction
-# -------------------------
+# =========================
+# INTELLIGENCE EXTRACTION
+# =========================
 def extract_intelligence(text: str):
     return {
-        "upiIds": re.findall(r"[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}", text),
+        "upiIds": re.findall(r"\b[a-zA-Z0-9.\-_]{2,}@[a-zA-Z]{2,}\b", text),
         "phoneNumbers": re.findall(r"\b\d{10}\b", text),
-        "phishingLinks": re.findall(r"https?://\S+", text),
-        "suspiciousKeywords": [k for k in SCAM_KEYWORDS if k in text.lower()]
+        "phishingLinks": re.findall(r"https?://[^\s]+", text),
+        "suspiciousKeywords": [
+            k for k in ["urgent", "verify", "blocked", "otp"]
+            if k in text.lower()
+        ]
     }
 
-# -------------------------
-# Agent reply logic
-# -------------------------
-def agent_reply(stage: int) -> str:
+# =========================
+# HUMAN-LIKE AGENT REPLIES
+# =========================
+def generate_reply(is_scam: bool, turn: int) -> str:
+    if not is_scam:
+        return "Hello, what is this regarding?"
+
     replies = {
-        1: "Why will my account be blocked?",
-        2: "I already verified earlier, why again?",
-        3: "Can you share any official link or message?",
+        1: "Why is my account being suspended?",
+        2: "I already have an account. Why do I need to verify again?",
+        3: "Can you share any official message or link?",
         4: "I am not comfortable sharing details like this."
     }
-    return replies.get(stage, "Please explain properly.")
 
-# -------------------------
-# Root
-# -------------------------
-@app.get("/")
-def home():
-    return {"message": "Honeypot API is running"}
+    return replies.get(turn, "Please explain properly, I am confused.")
 
-# -------------------------
-# Main Honeypot Endpoint
-# -------------------------
-@app.post("/api/honeypot")
-def honeypot(
-    data: Optional[HoneyPotRequest] = None,
-    x_api_key: str = Header(None)
-):
-    if x_api_key != API_KEY:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+# =========================
+# ROOT CHECK
+# =========================
+@app.route("/", methods=["GET"])
+def root():
+    return jsonify({"message": "Honeypot API is running"})
 
-    # GUVI tester (empty body)
-    if data is None:
-        return {
+# =========================
+# MAIN HONEYPOT ENDPOINT
+# =========================
+@app.route("/api/honeypot", methods=["POST"])
+def honeypot():
+    # -------- API KEY CHECK --------
+    api_key = request.headers.get("x-api-key")
+    if api_key != API_KEY:
+        return jsonify({"error": "Invalid API Key"}), 401
+
+    # -------- GUVI TESTER (NO BODY) --------
+    if not request.data:
+        return jsonify({
             "status": "success",
             "reply": "Honeypot endpoint is active and secured"
-        }
+        })
 
-    session_id = data.sessionId
+    data = request.get_json(silent=True)
+    if not data:
+        return jsonify({"error": "Invalid JSON"}), 422
 
+    session_id = data.get("sessionId")
+    message = data.get("message", {})
+    text = message.get("text", "")
+
+    if not session_id or not text:
+        return jsonify({"error": "Invalid request body"}), 422
+
+    # -------- SESSION INIT --------
     if session_id not in sessions:
         sessions[session_id] = {
             "messages": [],
@@ -114,45 +107,51 @@ def honeypot(
         }
 
     session = sessions[session_id]
-    session["messages"].append(data.message.text)
 
-    # Detect scam
+    # -------- STORE MESSAGE --------
+    session["messages"].append(text)
+    turn = len(session["messages"])
+
+    # -------- SCAM DETECTION --------
     if not session["scamDetected"]:
-        session["scamDetected"] = detect_scam(data.message.text)
+        session["scamDetected"] = detect_scam(text)
 
-    # Extract intelligence
-    intel = extract_intelligence(data.message.text)
-    for key in intel:
-        session["intelligence"][key].extend(intel[key])
+    # -------- INTELLIGENCE EXTRACTION --------
+    intel = extract_intelligence(text)
+    for k in session["intelligence"]:
+        session["intelligence"][k].extend(intel[k])
 
-    stage = len(session["messages"])
-    reply = agent_reply(stage)
-
-    # -------------------------
-    # FINAL CALLBACK (after enough engagement)
-    # -------------------------
-    if session["scamDetected"] and stage >= 3 and not session["callbackSent"]:
+    # -------- FINAL GUVI CALLBACK --------
+    if (
+        session["scamDetected"]
+        and turn >= 3
+        and not session["callbackSent"]
+    ):
         payload = {
             "sessionId": session_id,
             "scamDetected": True,
-            "totalMessagesExchanged": stage,
+            "totalMessagesExchanged": turn,
             "extractedIntelligence": session["intelligence"],
             "agentNotes": "Scammer used urgency and account threat tactics"
         }
 
         try:
-            requests.post(
-                "https://hackathon.guvi.in/api/updateHoneyPotFinalResult",
-                json=payload,
-                timeout=5
-            )
+            requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
             session["callbackSent"] = True
-        except:
-            pass
+        except Exception as e:
+            print("GUVI callback failed:", e)
 
-    return {
+    # -------- AGENT REPLY --------
+    reply = generate_reply(session["scamDetected"], turn)
+
+    return jsonify({
         "status": "success",
-        "reply": reply,
-        "scamDetected": session["scamDetected"],
-        "extractedIntelligence": session["intelligence"]
-    }
+        "reply": reply
+    })
+
+# =========================
+# RAILWAY ENTRYPOINT
+# =========================
+if __name__ == "__main__":
+    port = int(os.environ.get("PORT", 8000))
+    app.run(host="0.0.0.0", port=port)
