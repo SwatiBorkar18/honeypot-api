@@ -8,7 +8,7 @@ app = Flask(__name__)
 # =========================
 # CONFIG
 # =========================
-API_KEY = "test123"
+API_KEY = "agentic_honeypot_key"
 GUVI_CALLBACK_URL = "https://hackathon.guvi.in/api/updateHoneyPotFinalResult"
 
 # =========================
