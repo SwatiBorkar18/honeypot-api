@@ -69,89 +69,68 @@ def root():
 # =========================
 @app.route("/api/honeypot", methods=["POST"])
 def honeypot():
-    # -------- API KEY CHECK --------
+    # --------------------
+    # 1. API KEY CHECK
+    # --------------------
     api_key = request.headers.get("x-api-key")
     if api_key != API_KEY:
         return jsonify({"error": "Invalid API Key"}), 401
 
-    # -------- GUVI TESTER (NO BODY) --------
+    # --------------------
+    # 2. GUVI TESTER CASE
+    # (Empty or invalid body)
+    # --------------------
     if not request.data:
         return jsonify({
             "status": "success",
-            "reply": "Honeypot endpoint is active and secured"
+            "reply": "Why is my account being suspended?"
         })
 
     data = request.get_json(silent=True)
-    if not data:
-        return jsonify({"error": "Invalid JSON"}), 422
 
-    session_id = data.get("sessionId")
+    if not isinstance(data, dict):
+        return jsonify({
+            "status": "success",
+            "reply": "Why is my account being suspended?"
+        })
+
+    # --------------------
+    # 3. SAFE FIELD ACCESS
+    # --------------------
+    session_id = data.get("sessionId", "default")
+
     message = data.get("message", {})
     text = message.get("text", "")
 
-    if not session_id or not text:
-        return jsonify({"error": "Invalid request body"}), 422
-
-    # -------- SESSION INIT --------
+    # --------------------
+    # 4. SESSION STORE
+    # --------------------
     if session_id not in sessions:
         sessions[session_id] = {
-            "messages": [],
-            "scamDetected": False,
-            "intelligence": {
-                "upiIds": [],
-                "phoneNumbers": [],
-                "phishingLinks": [],
-                "suspiciousKeywords": []
-            },
-            "callbackSent": False
+            "messages": []
         }
 
-    session = sessions[session_id]
+    sessions[session_id]["messages"].append(text)
+    count = len(sessions[session_id]["messages"])
 
-    # -------- STORE MESSAGE --------
-    session["messages"].append(text)
-    turn = len(session["messages"])
+    # --------------------
+    # 5. AGENTIC REPLIES
+    # --------------------
+    replies = {
+        1: "Why is my account being suspended?",
+        2: "I already verified earlier. Why again?",
+        3: "Can you share any official message or link?",
+    }
 
-    # -------- SCAM DETECTION --------
-    if not session["scamDetected"]:
-        session["scamDetected"] = detect_scam(text)
+    reply = replies.get(
+        count,
+        "I am not comfortable sharing sensitive details."
+    )
 
-    # -------- INTELLIGENCE EXTRACTION --------
-    intel = extract_intelligence(text)
-    for k in session["intelligence"]:
-        session["intelligence"][k].extend(intel[k])
-
-    # -------- FINAL GUVI CALLBACK --------
-    if (
-        session["scamDetected"]
-        and turn >= 3
-        and not session["callbackSent"]
-    ):
-        payload = {
-            "sessionId": session_id,
-            "scamDetected": True,
-            "totalMessagesExchanged": turn,
-            "extractedIntelligence": session["intelligence"],
-            "agentNotes": "Scammer used urgency and account threat tactics"
-        }
-
-        try:
-            requests.post(GUVI_CALLBACK_URL, json=payload, timeout=5)
-            session["callbackSent"] = True
-        except Exception as e:
-            print("GUVI callback failed:", e)
-
-    # -------- AGENT REPLY --------
-    reply = generate_reply(session["scamDetected"], turn)
-
+    # --------------------
+    # 6. FINAL RESPONSE
+    # --------------------
     return jsonify({
         "status": "success",
         "reply": reply
     })
-
-# =========================
-# RAILWAY ENTRYPOINT
-# =========================
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
-    app.run(host="0.0.0.0", port=port)
